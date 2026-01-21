@@ -1,0 +1,4193 @@
+openapi: 3.0.3
+info:
+  title: Food Delivery Platform API
+  description: |
+    Comprehensive API documentation for the Food Delivery Platform.
+    
+    ## Architecture
+    - Microservices architecture with event-driven patterns
+    - JWT RS256 authentication with refresh token rotation
+    - WebSocket support for real-time tracking
+    - RESTful API design with standardized error responses
+    
+    ## Security
+    - All endpoints require JWT authentication unless marked as public
+    - Rate limiting: 100 req/min/user, 1000 req/min/IP
+    - TLS 1.3 encryption for all traffic
+    
+    ## Base URLs
+    - Production: https://api.fooddelivery.com
+    - Staging: https://api-staging.fooddelivery.com
+    
+    ## Version History
+    - v1.0.0: Initial release aligned with SRS v2.2
+    - v1.1.0: Added missing APIs - Discovery, Search, and WebSocket documentation
+    
+  version: 1.1.0
+  contact:
+    name: API Support
+    email: api@fooddelivery.com
+  license:
+    name: Proprietary
+    
+servers:
+  - url: https://api.fooddelivery.com
+    description: Production server
+  - url: https://api-staging.fooddelivery.com
+    description: Staging server
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Authentication
+    description: User registration, login, and token management
+  - name: User
+    description: User profile and account management
+  - name: Restaurant
+    description: Restaurant search, details, and menu
+  - name: Order
+    description: Order creation, tracking, and management
+  - name: Payment
+    description: Payment processing, authorization, and refunds
+  - name: Delivery
+    description: Driver management and delivery tracking
+  - name: Rating
+    description: Restaurant and driver ratings
+  - name: Notification
+    description: Push notifications and preferences
+  - name: Dispute
+    description: Order dispute management
+  - name: Admin
+    description: Administrative operations and reporting
+  - name: WebSocket
+    description: Real-time event streaming
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ==================== Authentication APIs ====================
+  /api/v1/auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register a new user
+      description: Create a new user account with email/phone and password
+      operationId: registerUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+                - first_name
+                - last_name
+                - role
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: customer@example.com
+                phone:
+                  type: string
+                  pattern: '^\+\d{10,15}$'
+                  example: "+84123456789"
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: SecurePass123!
+                first_name:
+                  type: string
+                  maxLength: 100
+                  example: John
+                last_name:
+                  type: string
+                  maxLength: 100
+                  example: Doe
+                role:
+                  type: string
+                  enum: [CUSTOMER, RESTAURANT_OWNER, DRIVER]
+                  example: CUSTOMER
+              oneOf:
+                - required: [email]
+                - required: [phone]
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  email:
+                    type: string
+                  phone:
+                    type: string
+                  role:
+                    type: string
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  created_at:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          $ref: '#/components/responses/DuplicateError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user and receive access + refresh tokens
+      operationId: loginUser
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+                password:
+                  type: string
+                  format: password
+              oneOf:
+                - required: [email]
+                - required: [phone]
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Get new access token using refresh token (with rotation)
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: Logout user
+      description: Revoke refresh token and invalidate session
+      operationId: logoutUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  # ==================== User APIs ====================
+  /api/v1/users/profile:
+    get:
+      tags:
+        - User
+      summary: Get user profile
+      description: Retrieve authenticated user's profile information
+      operationId: getUserProfile
+      responses:
+        '200':
+          description: Profile retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    put:
+      tags:
+        - User
+      summary: Update user profile
+      description: Update user profile information (name, avatar)
+      operationId: updateUserProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name:
+                  type: string
+                  maxLength: 100
+                last_name:
+                  type: string
+                  maxLength: 100
+                avatar_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/v1/users/addresses:
+    get:
+      tags:
+        - User
+      summary: List user addresses
+      description: Get all delivery addresses for authenticated user
+      operationId: listUserAddresses
+      responses:
+        '200':
+          description: Addresses retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  addresses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserAddress'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags:
+        - User
+      summary: Add new address
+      description: Create a new delivery address
+      operationId: createUserAddress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAddressInput'
+      responses:
+        '201':
+          description: Address created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAddress'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/v1/users/addresses/{id}:
+    put:
+      tags:
+        - User
+      summary: Update address
+      description: Update existing delivery address
+      operationId: updateUserAddress
+      parameters:
+        - $ref: '#/components/parameters/AddressId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserAddressInput'
+      responses:
+        '200':
+          description: Address updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserAddress'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      tags:
+        - User
+      summary: Delete address
+      description: Soft delete delivery address
+      operationId: deleteUserAddress
+      parameters:
+        - $ref: '#/components/parameters/AddressId'
+      responses:
+        '200':
+          description: Address deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/users/payment-methods:
+    get:
+      tags:
+        - User
+      summary: List payment methods
+      description: Get all saved payment methods
+      operationId: listPaymentMethods
+      responses:
+        '200':
+          description: Payment methods retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment_methods:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PaymentMethod'
+
+    post:
+      tags:
+        - User
+      summary: Add payment method
+      description: Add new tokenized payment method
+      operationId: createPaymentMethod
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMethodInput'
+      responses:
+        '201':
+          description: Payment method added successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethod'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/users/payment-methods/{id}:
+    delete:
+      tags:
+        - User
+      summary: Delete payment method
+      description: Remove saved payment method
+      operationId: deletePaymentMethod
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Payment method deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  # ==================== Restaurant APIs ====================
+  /api/v1/restaurants:
+    get:
+      tags:
+        - Restaurant
+      summary: Search restaurants
+      description: Search restaurants by location, filters, and keywords
+      operationId: searchRestaurants
+      security: []
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+          example: 10.8231
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+          example: 106.6297
+        - name: distance_km
+          in: query
+          schema:
+            type: number
+            format: double
+            default: 5
+          example: 5
+        - name: city_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          example: pizza
+        - name: rating_min
+          in: query
+          schema:
+            type: number
+            format: double
+            minimum: 0
+            maximum: 5
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [distance, rating, popularity]
+            default: distance
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Restaurants retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RestaurantSummary'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+    post:
+      tags:
+        - Restaurant
+      summary: Create restaurant
+      description: Register a new restaurant (Restaurant Owner only)
+      operationId: createRestaurant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestaurantInput'
+      responses:
+        '201':
+          description: Restaurant created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurant_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [PENDING]
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/v1/restaurants/{id}:
+    get:
+      tags:
+        - Restaurant
+      summary: Get restaurant details
+      description: Retrieve detailed restaurant information
+      operationId: getRestaurant
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      responses:
+        '200':
+          description: Restaurant details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantDetail'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    put:
+      tags:
+        - Restaurant
+      summary: Update restaurant
+      description: Update restaurant information (Owner only)
+      operationId: updateRestaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                is_accepting_orders:
+                  type: boolean
+                opening_hours:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/OpeningHours'
+      responses:
+        '200':
+          description: Restaurant updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestaurantDetail'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/restaurants/{id}/menu:
+    get:
+      tags:
+        - Restaurant
+      summary: Get restaurant menu
+      description: Retrieve full menu with categories and items
+      operationId: getRestaurantMenu
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      responses:
+        '200':
+          description: Menu retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  menu_categories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MenuCategory'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/restaurants/{id}/menu-categories:
+    post:
+      tags:
+        - Restaurant
+      summary: Create menu category
+      description: Add new menu category (Owner only)
+      operationId: createMenuCategory
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                sort_order:
+                  type: integer
+                  default: 0
+      responses:
+        '201':
+          description: Category created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  category_id:
+                    type: string
+                    format: uuid
+                  name:
+                    type: string
+                  sort_order:
+                    type: integer
+
+  /api/v1/restaurants/{id}/menu-items:
+    post:
+      tags:
+        - Restaurant
+      summary: Create menu item
+      description: Add new menu item (Owner only)
+      operationId: createMenuItem
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MenuItemInput'
+      responses:
+        '201':
+          description: Menu item created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  menu_item_id:
+                    type: string
+                    format: uuid
+
+  /api/v1/menu-items/{id}:
+    put:
+      tags:
+        - Restaurant
+      summary: Update menu item
+      description: Update existing menu item (Owner only)
+      operationId: updateMenuItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                price:
+                  type: number
+                  format: double
+                is_available:
+                  type: boolean
+                image_url:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          description: Menu item updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MenuItem'
+
+    delete:
+      tags:
+        - Restaurant
+      summary: Delete menu item
+      description: Soft delete menu item (Owner only)
+      operationId: deleteMenuItem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Menu item deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/v1/restaurants/{id}/status:
+    put:
+      tags:
+        - Restaurant
+      summary: Toggle restaurant status
+      description: Turn accepting orders on/off (Owner only)
+      operationId: updateRestaurantStatus
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - is_accepting_orders
+              properties:
+                is_accepting_orders:
+                  type: boolean
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/v1/restaurants/{id}/orders:
+    get:
+      tags:
+        - Restaurant
+      summary: Get restaurant orders
+      description: List orders for restaurant (Owner only)
+      operationId: getRestaurantOrders
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderDetail'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /api/v1/restaurants/{id}/orders/{oid}/status:
+    put:
+      tags:
+        - Restaurant
+      summary: Update order status
+      description: Update order status by restaurant (Owner only)
+      operationId: updateOrderStatusByRestaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+        - name: oid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum: [PREPARING, READY_FOR_PICKUP, CANCELLED_BY_RESTAURANT]
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Order status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  reason:
+                    type: string
+
+  /api/v1/discovery:
+    get:
+      tags:
+        - Restaurant
+      summary: Get discovery content
+      description: Retrieve featured restaurants, trending items, and promotions for homepage
+      operationId: getDiscoveryContent
+      security: []
+      parameters:
+        - name: city_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+          description: Filter by city ID
+      responses:
+        '200':
+          description: Discovery content retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  featured:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RestaurantSummary'
+                    description: Featured restaurants curated by platform
+                  trending:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RestaurantSummary'
+                    description: Trending restaurants based on recent orders
+                  promotions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        title:
+                          type: string
+                        description:
+                          type: string
+                        image_url:
+                          type: string
+                          format: uri
+                        coupon_code:
+                          type: string
+                        restaurant_id:
+                          type: string
+                          format: uuid
+                        valid_until:
+                          type: string
+                          format: date-time
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/search:
+    get:
+      tags:
+        - Restaurant
+      summary: Search restaurants
+      description: Full-text search for restaurants by keyword with location filtering
+      operationId: searchRestaurantsByKeyword
+      security: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Search query (restaurant name, cuisine, dish)
+          example: pizza
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+          example: 10.8231
+        - name: lng
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+          example: 106.6297
+        - name: distance_km
+          in: query
+          schema:
+            type: number
+            format: double
+            default: 5
+          example: 3
+        - name: city_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: rating_min
+          in: query
+          schema:
+            type: number
+            format: double
+            minimum: 0
+            maximum: 5
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [distance, rating, relevance]
+            default: relevance
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Search results retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RestaurantSummary'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  # ==================== Order APIs ====================
+  /api/v1/orders:
+    get:
+      tags:
+        - Order
+      summary: List orders
+      description: Get order history for authenticated user
+      operationId: listOrders
+      parameters:
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/OrderStatus'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Orders retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderSummary'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Order
+      summary: Create order
+      description: Create new order with validation
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderInput'
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDetail'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '422':
+          description: Business logic validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                restaurant_closed:
+                  value:
+                    error:
+                      code: RESTAURANT_CLOSED
+                      message: Restaurant is not accepting orders at this time
+                      trace_id: abc-123-xyz
+                item_unavailable:
+                  value:
+                    error:
+                      code: ITEM_UNAVAILABLE
+                      message: One or more items are no longer available
+                      details:
+                        unavailable_items: ["uuid1", "uuid2"]
+                      trace_id: abc-123-xyz
+                order_minimum_not_met:
+                  value:
+                    error:
+                      code: ORDER_MINIMUM_NOT_MET
+                      message: Order total below minimum order value
+                      details:
+                        minimum_order_value: 50000
+                        current_total: 35000
+                      trace_id: abc-123-xyz
+
+  /api/v1/orders/{id}:
+    get:
+      tags:
+        - Order
+      summary: Get order details
+      description: Retrieve full order details including items and delivery
+      operationId: getOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderDetail'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/orders/{id}/cancel:
+    put:
+      tags:
+        - Order
+      summary: Cancel order
+      description: Cancel order and initiate refund if applicable
+      operationId: cancelOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: Order cancelled successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [CANCELLED]
+                  refund_amount:
+                    type: number
+                    format: double
+                  refund_reason:
+                    type: string
+                  refund_initiated_at:
+                    type: string
+                    format: date-time
+        '409':
+          description: Order cannot be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/orders/{id}/reorder:
+    post:
+      tags:
+        - Order
+      summary: Reorder
+      description: Create new order with same items as previous order
+      operationId: reorderOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delivery_address_id:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Reorder created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  new_order_id:
+                    type: string
+                    format: uuid
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/OrderItem'
+                  total:
+                    type: number
+                    format: double
+
+  # ==================== Payment APIs ====================
+  /api/v1/payments/authorize:
+    post:
+      tags:
+        - Payment
+      summary: Authorize payment
+      description: Create payment authorization (pre-auth)
+      operationId: authorizePayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentAuthorizationInput'
+      responses:
+        '200':
+          description: Payment authorized successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentAuthorization'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '409':
+          description: Duplicate payment request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Payment gateway error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/payments/{id}/capture:
+    post:
+      tags:
+        - Payment
+      summary: Capture payment
+      description: Capture previously authorized payment
+      operationId: capturePayment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - idempotency_key
+              properties:
+                idempotency_key:
+                  type: string
+      responses:
+        '200':
+          description: Payment captured successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  payment_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [CAPTURED]
+                  captured_at:
+                    type: string
+                    format: date-time
+
+  /api/v1/payments/{id}/refund:
+    post:
+      tags:
+        - Payment
+      summary: Refund payment
+      description: Create full or partial refund
+      operationId: refundPayment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+                - reason
+              properties:
+                amount:
+                  type: number
+                  format: double
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Refund initiated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  refund_id:
+                    type: string
+                    format: uuid
+                  payment_id:
+                    type: string
+                    format: uuid
+                  amount:
+                    type: number
+                    format: double
+                  reason:
+                    type: string
+                  status:
+                    type: string
+                    enum: [PENDING]
+
+  /api/v1/webhooks/payment:
+    post:
+      tags:
+        - Payment
+      summary: Payment webhook
+      description: Handle payment gateway webhooks
+      operationId: paymentWebhook
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gateway_transaction_id:
+                  type: string
+                status:
+                  type: string
+                timestamp:
+                  type: string
+                  format: date-time
+                signature:
+                  type: string
+      responses:
+        '200':
+          description: Webhook received
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+                    example: true
+
+  # ==================== Delivery APIs ====================
+  /api/v1/drivers/register:
+    post:
+      tags:
+        - Delivery
+      summary: Register driver
+      description: Register as a driver (requires user account)
+      operationId: registerDriver
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DriverRegistrationInput'
+      responses:
+        '201':
+          description: Driver registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  driver_id:
+                    type: string
+                    format: uuid
+                  user_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [PENDING]
+
+  /api/v1/drivers/{id}/status:
+    put:
+      tags:
+        - Delivery
+      summary: Update driver online status
+      description: Set driver as online/offline
+      operationId: updateDriverStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - is_online
+              properties:
+                is_online:
+                  type: boolean
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  driver_id:
+                    type: string
+                    format: uuid
+                  is_online:
+                    type: boolean
+                  current_location:
+                    $ref: '#/components/schemas/Location'
+                  available_tasks_count:
+                    type: integer
+
+  /api/v1/drivers/{id}/location:
+    put:
+      tags:
+        - Delivery
+      summary: Update driver location
+      description: Update current GPS location (every 5s when active)
+      operationId: updateDriverLocation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - lat
+                - lng
+                - timestamp
+              properties:
+                lat:
+                  type: number
+                  format: double
+                lng:
+                  type: number
+                  format: double
+                speed_kmh:
+                  type: number
+                  format: double
+                heading:
+                  type: integer
+                  minimum: 0
+                  maximum: 359
+                accuracy_meters:
+                  type: number
+                  format: double
+                timestamp:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Location updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  driver_id:
+                    type: string
+                    format: uuid
+                  current_location:
+                    $ref: '#/components/schemas/Location'
+                  updated_at:
+                    type: string
+                    format: date-time
+
+  /api/v1/drivers/{id}/earnings:
+    get:
+      tags:
+        - Delivery
+      summary: Get driver earnings
+      description: Retrieve earnings history for driver
+      operationId: getDriverEarnings
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: from_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Earnings retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_earnings:
+                    type: number
+                    format: double
+                  total_trips:
+                    type: integer
+                  breakdown:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                        earnings:
+                          type: number
+                          format: double
+                        trips:
+                          type: integer
+                        avg_rating:
+                          type: number
+                          format: double
+
+  /api/v1/delivery-tasks:
+    get:
+      tags:
+        - Delivery
+      summary: List delivery tasks
+      description: Get delivery tasks (filtered by driver)
+      operationId: listDeliveryTasks
+      parameters:
+        - name: driver_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [CREATED, ASSIGNED, PICKED_UP, IN_TRANSIT, DELIVERED, CANCELLED]
+      responses:
+        '200':
+          description: Delivery tasks retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeliveryTask'
+
+    post:
+      tags:
+        - Delivery
+      summary: Create delivery task
+      description: Create new delivery task (system internal)
+      operationId: createDeliveryTask
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryTaskInput'
+      responses:
+        '201':
+          description: Delivery task created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_task_id:
+                    type: string
+                    format: uuid
+                  order_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [CREATED]
+
+  /api/v1/delivery-tasks/{id}/status:
+    put:
+      tags:
+        - Delivery
+      summary: Update delivery task status
+      description: Update delivery task progress
+      operationId: updateDeliveryTaskStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum: [ASSIGNED, PICKED_UP, IN_TRANSIT, DELIVERED, CANCELLED]
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  delivery_task_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                  updated_at:
+                    type: string
+                    format: date-time
+
+  # ==================== Rating APIs ====================
+  /api/v1/restaurants/{id}/ratings:
+    get:
+      tags:
+        - Rating
+      summary: Get restaurant ratings
+      description: Retrieve ratings and reviews for restaurant
+      operationId: getRestaurantRatings
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Ratings retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ratings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Rating'
+                  average_score:
+                    type: number
+                    format: double
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Rating
+      summary: Rate restaurant
+      description: Submit rating for restaurant after order delivery
+      operationId: rateRestaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingInput'
+      responses:
+        '201':
+          description: Rating submitted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rating'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/drivers/{id}/ratings:
+    get:
+      tags:
+        - Rating
+      summary: Get driver ratings
+      description: Retrieve ratings for driver
+      operationId: getDriverRatings
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Ratings retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ratings:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Rating'
+                  average_score:
+                    type: number
+                    format: double
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Rating
+      summary: Rate driver
+      description: Submit rating for driver after delivery
+      operationId: rateDriver
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RatingInput'
+      responses:
+        '201':
+          description: Rating submitted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rating'
+
+  # ==================== Notification APIs ====================
+  /api/v1/notifications:
+    get:
+      tags:
+        - Notification
+      summary: Get notifications
+      description: Retrieve notification history
+      operationId: listNotifications
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: Notifications retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  notifications:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Notification'
+                  total:
+                    type: integer
+                  unread_count:
+                    type: integer
+
+  /api/v1/notifications/{id}/read:
+    put:
+      tags:
+        - Notification
+      summary: Mark notification as read
+      description: Mark single notification as read
+      operationId: markNotificationRead
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Notification marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/v1/notifications/read-all:
+    put:
+      tags:
+        - Notification
+      summary: Mark all as read
+      description: Mark all notifications as read
+      operationId: markAllNotificationsRead
+      responses:
+        '200':
+          description: All notifications marked as read
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  count:
+                    type: integer
+
+  /api/v1/notification-preferences:
+    get:
+      tags:
+        - Notification
+      summary: Get notification preferences
+      description: Retrieve user's notification preferences
+      operationId: getNotificationPreferences
+      responses:
+        '200':
+          description: Preferences retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preferences:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NotificationPreference'
+
+    put:
+      tags:
+        - Notification
+      summary: Update notification preferences
+      description: Update notification channel preferences
+      operationId: updateNotificationPreferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                preferences:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/NotificationPreference'
+      responses:
+        '200':
+          description: Preferences updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  # ==================== Dispute APIs ====================
+  /api/v1/disputes:
+    get:
+      tags:
+        - Dispute
+      summary: List disputes
+      description: Get dispute history for customer
+      operationId: listDisputes
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, investigating, resolved, rejected]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Disputes retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  disputes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DisputeSummary'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Dispute
+      summary: Create dispute
+      description: File a dispute for an order (within 24h of delivery)
+      operationId: createDispute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DisputeInput'
+      responses:
+        '201':
+          description: Dispute created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dispute_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [open]
+                  estimated_resolution:
+                    type: string
+                    example: "24 hours"
+                  auto_resolved:
+                    type: boolean
+                  compensation:
+                    type: object
+                    properties:
+                      type:
+                        type: string
+                      amount:
+                        type: number
+                        format: double
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/disputes/{id}:
+    get:
+      tags:
+        - Dispute
+      summary: Get dispute details
+      description: Retrieve detailed dispute information
+      operationId: getDispute
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Dispute retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisputeDetail'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/disputes/{id}/resolve:
+    put:
+      tags:
+        - Dispute
+      summary: Resolve dispute
+      description: Resolve dispute with compensation (Admin only)
+      operationId: resolveDispute
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - resolution_type
+                - resolution_notes
+              properties:
+                resolution_type:
+                  type: string
+                  enum: [full_refund, partial_refund, discount_code, no_action]
+                resolution_amount:
+                  type: number
+                  format: double
+                resolution_notes:
+                  type: string
+      responses:
+        '200':
+          description: Dispute resolved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dispute_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [resolved]
+                  resolution:
+                    type: object
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  # ==================== Admin APIs ====================
+  /api/v1/admin/dashboard:
+    get:
+      tags:
+        - Admin
+      summary: Get dashboard metrics
+      description: Retrieve KPIs and metrics for dashboard (Admin only)
+      operationId: getAdminDashboard
+      parameters:
+        - name: city_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: from_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Dashboard metrics retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMetrics'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/v1/admin/users:
+    get:
+      tags:
+        - Admin
+      summary: List users
+      description: Get users with filters (Admin only)
+      operationId: listUsersAdmin
+      parameters:
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [CUSTOMER, RESTAURANT_OWNER, DRIVER, ADMIN]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, suspended]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Users retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/UserProfile'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /api/v1/admin/users/{id}/suspend:
+    put:
+      tags:
+        - Admin
+      summary: Suspend user
+      description: Suspend user account (Admin only)
+      operationId: suspendUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+                - duration_days
+              properties:
+                reason:
+                  type: string
+                duration_days:
+                  type: integer
+      responses:
+        '200':
+          description: User suspended successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [SUSPENDED]
+                  suspended_until:
+                    type: string
+                    format: date-time
+
+  /api/v1/admin/users/{id}/activate:
+    put:
+      tags:
+        - Admin
+      summary: Activate user
+      description: Reactivate suspended user (Admin only)
+      operationId: activateUser
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User activated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [ACTIVE]
+
+  /api/v1/admin/restaurants:
+    get:
+      tags:
+        - Admin
+      summary: List restaurants (Admin)
+      description: Get restaurants with filters (Admin only)
+      operationId: listRestaurantsAdmin
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, ACTIVE, INACTIVE, SUSPENDED]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Restaurants retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurants:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RestaurantDetail'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /api/v1/admin/restaurants/{id}/approve:
+    put:
+      tags:
+        - Admin
+      summary: Approve restaurant
+      description: Approve pending restaurant (Admin only)
+      operationId: approveRestaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Restaurant approved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurant_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [ACTIVE]
+
+  /api/v1/admin/restaurants/{id}/reject:
+    put:
+      tags:
+        - Admin
+      summary: Reject restaurant
+      description: Reject pending restaurant (Admin only)
+      operationId: rejectRestaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Restaurant rejected successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurant_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [REJECTED]
+
+  /api/v1/admin/restaurants/{id}/suspend:
+    put:
+      tags:
+        - Admin
+      summary: Suspend restaurant
+      description: Suspend restaurant operations (Admin only)
+      operationId: suspendRestaurant
+      parameters:
+        - $ref: '#/components/parameters/RestaurantId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+                - duration_days
+              properties:
+                reason:
+                  type: string
+                duration_days:
+                  type: integer
+      responses:
+        '200':
+          description: Restaurant suspended successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  restaurant_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [SUSPENDED]
+
+  /api/v1/admin/drivers:
+    get:
+      tags:
+        - Admin
+      summary: List drivers (Admin)
+      description: Get drivers with filters (Admin only)
+      operationId: listDriversAdmin
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, APPROVED, REJECTED, SUSPENDED]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Drivers retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  drivers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DriverDetail'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+  /api/v1/admin/drivers/{id}/approve:
+    put:
+      tags:
+        - Admin
+      summary: Approve driver
+      description: Approve pending driver (Admin only)
+      operationId: approveDriver
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Driver approved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  driver_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [APPROVED]
+
+  /api/v1/admin/drivers/{id}/reject:
+    put:
+      tags:
+        - Admin
+      summary: Reject driver
+      description: Reject pending driver (Admin only)
+      operationId: rejectDriver
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Driver rejected successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  driver_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [REJECTED]
+
+  /api/v1/admin/coupons:
+    get:
+      tags:
+        - Admin
+      summary: List coupons
+      description: Get all coupons (Admin only)
+      operationId: listCoupons
+      parameters:
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+      responses:
+        '200':
+          description: Coupons retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  coupons:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Coupon'
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+
+    post:
+      tags:
+        - Admin
+      summary: Create coupon
+      description: Create new promotional coupon (Admin only)
+      operationId: createCoupon
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CouponInput'
+      responses:
+        '201':
+          description: Coupon created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  coupon_id:
+                    type: string
+                    format: uuid
+                  code:
+                    type: string
+                  status:
+                    type: string
+                    enum: [active]
+
+  /api/v1/admin/coupons/{id}:
+    put:
+      tags:
+        - Admin
+      summary: Update coupon
+      description: Update coupon status (Admin only)
+      operationId: updateCoupon
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                is_active:
+                  type: boolean
+      responses:
+        '200':
+          description: Coupon updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  coupon_id:
+                    type: string
+                    format: uuid
+                  is_active:
+                    type: boolean
+
+  /api/v1/admin/payments/reconciliation:
+    get:
+      tags:
+        - Admin
+      summary: Payment reconciliation
+      description: Daily payment reconciliation report (Admin only)
+      operationId: getPaymentReconciliation
+      parameters:
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Reconciliation data retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reconciled:
+                    type: integer
+                  pending:
+                    type: integer
+                  discrepancies:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        payment_id:
+                          type: string
+                          format: uuid
+                        expected_amount:
+                          type: number
+                          format: double
+                        actual_amount:
+                          type: number
+                          format: double
+                        status:
+                          type: string
+                        reason:
+                          type: string
+
+  /api/v1/admin/reports/revenue:
+    get:
+      tags:
+        - Admin
+      summary: Revenue report
+      description: Revenue analytics report (Admin only)
+      operationId: getRevenueReport
+      parameters:
+        - name: city_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: granularity
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [daily, weekly, monthly]
+        - name: from_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Revenue report retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueReport'
+
+  /api/v1/admin/reports/orders:
+    get:
+      tags:
+        - Admin
+      summary: Orders report
+      description: Order analytics report (Admin only)
+      operationId: getOrdersReport
+      parameters:
+        - name: city_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: granularity
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [hourly, daily]
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Orders report retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        hour:
+                          type: string
+                        orders:
+                          type: integer
+                        revenue:
+                          type: number
+                          format: double
+                        cancellation_rate:
+                          type: number
+                          format: double
+                  peak_hours:
+                    type: array
+                    items:
+                      type: string
+
+  /api/v1/admin/reports/sla:
+    get:
+      tags:
+        - Admin
+      summary: SLA report
+      description: Service level agreement metrics (Admin only)
+      operationId: getSLAReport
+      parameters:
+        - name: from_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to_date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: SLA report retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  on_time_delivery_rate:
+                    type: number
+                    format: double
+                  avg_delivery_time_minutes:
+                    type: integer
+                  sla_breaches:
+                    type: integer
+                  by_restaurant:
+                    type: array
+                    items:
+                      type: object
+                  by_driver:
+                    type: array
+                    items:
+                      type: object
+
+  /api/v1/admin/config:
+    get:
+      tags:
+        - Admin
+      summary: Get system configuration
+      description: Retrieve system configuration (Admin only)
+      operationId: getSystemConfig
+      responses:
+        '200':
+          description: Configuration retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemConfig'
+
+    put:
+      tags:
+        - Admin
+      summary: Update system configuration
+      description: Update system parameters (Admin only)
+      operationId: updateSystemConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemConfig'
+      responses:
+        '200':
+          description: Configuration updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  updated_fields:
+                    type: array
+                    items:
+                      type: string
+
+  # ==================== WebSocket APIs ====================
+  # Note: WebSocket endpoints are not fully supported in OpenAPI 3.0 specification.
+  # This is a documentation-only representation of the WebSocket contract.
+  # For full WebSocket specification, refer to AsyncAPI or detailed API documentation.
+  
+  /ws:
+    get:
+      tags:
+        - WebSocket
+      summary: WebSocket connection endpoint
+      description: |
+        Establish WebSocket connection for real-time order tracking and driver location updates.
+        
+        **Connection URL:** `wss://api.fooddelivery.com/ws?token={jwt_token}`
+        
+        **Authentication:** JWT token passed as query parameter
+        
+        **Heartbeat:** Client should send ping every 30 seconds
+        
+        **Reconnection:** Exponential backoff (1s → 2s → 4s → 30s max)
+        
+        **Max Connections:** 5 per user (mobile + web)
+        
+        ## Client Messages
+        
+        **Subscribe to Order Updates:**
+        ```json
+        {
+          "type": "subscribe",
+          "channel": "order:{order_id}"
+        }
+        ```
+        
+        **Subscribe to Driver Location:**
+        ```json
+        {
+          "type": "subscribe",
+          "channel": "driver:location:{order_id}"
+        }
+        ```
+        
+        **Unsubscribe:**
+        ```json
+        {
+          "type": "unsubscribe",
+          "channel": "order:{order_id}"
+        }
+        ```
+        
+        **Keep-alive Ping:**
+        ```json
+        {
+          "type": "ping"
+        }
+        ```
+        
+        ## Server Messages
+        
+        **Order Status Update:**
+        ```json
+        {
+          "type": "order_status",
+          "data": {
+            "order_id": "uuid",
+            "status": "PREPARING|READY_FOR_PICKUP|ON_THE_WAY|DELIVERED",
+            "updated_at": "2026-01-21T10:30:00Z"
+          }
+        }
+        ```
+        
+        **Driver Location Update (every 5s when active):**
+        ```json
+        {
+          "type": "driver_location",
+          "data": {
+            "order_id": "uuid",
+            "lat": 10.8231,
+            "lng": 106.6297,
+            "heading": 45,
+            "speed_kmh": 25,
+            "eta_minutes": 12,
+            "updated_at": "2026-01-21T10:30:00Z"
+          }
+        }
+        ```
+        
+        **ETA Update:**
+        ```json
+        {
+          "type": "eta_update",
+          "data": {
+            "order_id": "uuid",
+            "eta_minutes": 8,
+            "reason": "traffic_cleared"
+          }
+        }
+        ```
+        
+        **Pong Response:**
+        ```json
+        {
+          "type": "pong"
+        }
+        ```
+        
+        **Subscription Confirmation:**
+        ```json
+        {
+          "type": "subscribed",
+          "channel": "order:12345"
+        }
+        ```
+        
+        **Error:**
+        ```json
+        {
+          "type": "error",
+          "data": {
+            "code": "SUBSCRIPTION_FAILED",
+            "message": "Order not found or access denied"
+          }
+        }
+        ```
+        
+        ## Scalability
+        - Horizontal scaling via sticky sessions (consistent hashing by user_id)
+        - Target: 50k concurrent connections (MVP)
+        - Location update frequency: Every 5 seconds (driver app)
+        - Message latency: <500ms end-to-end
+        
+      operationId: websocketConnection
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: JWT authentication token
+      responses:
+        '101':
+          description: Switching Protocols - WebSocket connection established
+        '401':
+          description: Unauthorized - Invalid or expired JWT token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Too Many Connections - User has exceeded max connections (5)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+# ==================== Components ====================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT RS256 token with 24h TTL
+
+  parameters:
+    AddressId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Address UUID
+    
+    RestaurantId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Restaurant UUID
+    
+    OrderId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Order UUID
+    
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: Page number
+    
+    PageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: Items per page
+
+  schemas:
+    # ==================== Common Schemas ====================
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+            - trace_id
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Request validation failed
+            details:
+              type: object
+              properties:
+                field:
+                  type: string
+                reason:
+                  type: string
+                metadata:
+                  type: object
+            trace_id:
+              type: string
+              example: abc-123-xyz-456
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 20
+        total_count:
+          type: integer
+          example: 150
+        total_pages:
+          type: integer
+          example: 8
+        next_cursor:
+          type: string
+          nullable: true
+          example: eyJpZCI6MTIzfQ==
+        has_more:
+          type: boolean
+          example: true
+
+    Location:
+      type: object
+      required:
+        - lat
+        - lng
+      properties:
+        lat:
+          type: number
+          format: double
+          example: 10.8231
+        lng:
+          type: number
+          format: double
+          example: 106.6297
+
+    # ==================== Auth & User Schemas ====================
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token (24h TTL)
+        refresh_token:
+          type: string
+          description: Refresh token (30d TTL)
+        user:
+          $ref: '#/components/schemas/UserProfile'
+
+    UserProfile:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        avatar_url:
+          type: string
+          format: uri
+        role:
+          type: string
+          enum: [CUSTOMER, RESTAURANT_OWNER, DRIVER, ADMIN]
+        is_active:
+          type: boolean
+        city_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserAddress:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        label:
+          type: string
+          example: Home
+        street:
+          type: string
+        city_id:
+          type: integer
+          format: int64
+        district:
+          type: string
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        is_default:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    UserAddressInput:
+      type: object
+      required:
+        - street
+        - city_id
+        - lat
+        - lng
+      properties:
+        label:
+          type: string
+          maxLength: 100
+        street:
+          type: string
+        city_id:
+          type: integer
+          format: int64
+        district:
+          type: string
+          maxLength: 100
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        is_default:
+          type: boolean
+
+    PaymentMethod:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [CARD, EWALLET, COD]
+        provider:
+          type: string
+          example: stripe
+        last4:
+          type: string
+          example: "4242"
+        is_default:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    PaymentMethodInput:
+      type: object
+      required:
+        - type
+        - token
+      properties:
+        type:
+          type: string
+          enum: [CARD, EWALLET, COD]
+        provider:
+          type: string
+        token:
+          type: string
+          description: Tokenized payment method from gateway
+        last4:
+          type: string
+          maxLength: 4
+        is_default:
+          type: boolean
+
+    # ==================== Restaurant Schemas ====================
+    RestaurantSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        average_rating:
+          type: number
+          format: double
+        total_reviews:
+          type: integer
+        is_accepting_orders:
+          type: boolean
+        min_order_value:
+          type: number
+          format: double
+        est_delivery_time:
+          type: integer
+          description: Estimated delivery time in minutes
+
+    RestaurantDetail:
+      allOf:
+        - $ref: '#/components/schemas/RestaurantSummary'
+        - type: object
+          properties:
+            owner_id:
+              type: string
+              format: uuid
+            street:
+              type: string
+            city_id:
+              type: integer
+              format: int64
+            district:
+              type: string
+            service_radius_km:
+              type: number
+              format: double
+            status:
+              type: string
+              enum: [PENDING, ACTIVE, INACTIVE, SUSPENDED]
+            opening_hours:
+              type: array
+              items:
+                $ref: '#/components/schemas/OpeningHours'
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+
+    RestaurantInput:
+      type: object
+      required:
+        - name
+        - street
+        - city_id
+        - lat
+        - lng
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        street:
+          type: string
+        city_id:
+          type: integer
+          format: int64
+        district:
+          type: string
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        service_radius_km:
+          type: number
+          format: double
+          default: 5.0
+        opening_hours:
+          type: array
+          items:
+            $ref: '#/components/schemas/OpeningHours'
+
+    OpeningHours:
+      type: object
+      properties:
+        day_of_week:
+          type: integer
+          minimum: 0
+          maximum: 6
+          description: 0=Sunday, 6=Saturday
+        open_time:
+          type: string
+          format: time
+          example: "09:00"
+        close_time:
+          type: string
+          format: time
+          example: "22:00"
+
+    MenuCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        restaurant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        sort_order:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuItem'
+
+    MenuItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        restaurant_id:
+          type: string
+          format: uuid
+        category_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+          format: double
+        is_available:
+          type: boolean
+        image_url:
+          type: string
+          format: uri
+        variants:
+          type: array
+          items:
+            $ref: '#/components/schemas/MenuItemVariant'
+
+    MenuItemVariant:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        item_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: Large
+        price_delta:
+          type: number
+          format: double
+          example: 10000
+        is_available:
+          type: boolean
+
+    MenuItemInput:
+      type: object
+      required:
+        - name
+        - price
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        price:
+          type: number
+          format: double
+        category_id:
+          type: string
+          format: uuid
+        image_url:
+          type: string
+          format: uri
+        variants:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              price_delta:
+                type: number
+                format: double
+
+    # ==================== Order Schemas ====================
+    OrderStatus:
+      type: string
+      enum:
+        - CREATED
+        - PAYMENT_FAILED
+        - CONFIRMED
+        - PREPARING
+        - READY_FOR_PICKUP
+        - ON_THE_WAY
+        - DELIVERED
+        - CANCELLED
+        - DELIVERY_FAILED
+
+    OrderSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        restaurant_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        total_price:
+          type: number
+          format: double
+        estimated_delivery_time:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    OrderDetail:
+      allOf:
+        - $ref: '#/components/schemas/OrderSummary'
+        - type: object
+          properties:
+            city_id:
+              type: integer
+              format: int64
+            delivery_type:
+              type: string
+              enum: [DELIVERY, PICKUP]
+            delivery_address:
+              $ref: '#/components/schemas/UserAddress'
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/OrderItem'
+            subtotal:
+              type: number
+              format: double
+            coupon_code:
+              type: string
+            coupon_discount:
+              type: number
+              format: double
+            restaurant_fee:
+              type: number
+              format: double
+            tax_amount:
+              type: number
+              format: double
+            delivery_fee:
+              type: number
+              format: double
+            payment_status:
+              type: string
+              enum: [PENDING, AUTHORIZED, CAPTURED, FAILED, REFUNDED]
+            delivery_task:
+              $ref: '#/components/schemas/DeliveryTask'
+            notes:
+              type: string
+
+    OrderInput:
+      type: object
+      required:
+        - restaurant_id
+        - delivery_type
+        - items
+      properties:
+        restaurant_id:
+          type: string
+          format: uuid
+        delivery_address_id:
+          type: string
+          format: uuid
+        delivery_type:
+          type: string
+          enum: [DELIVERY, PICKUP]
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - menu_item_id
+              - quantity
+            properties:
+              menu_item_id:
+                type: string
+                format: uuid
+              quantity:
+                type: integer
+                minimum: 1
+              selected_variants:
+                type: array
+                items:
+                  type: string
+                  format: uuid
+        coupon_code:
+          type: string
+        notes:
+          type: string
+          maxLength: 500
+
+    OrderItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        menu_item_id:
+          type: string
+          format: uuid
+        name_snapshot:
+          type: string
+        price_snapshot:
+          type: number
+          format: double
+        quantity:
+          type: integer
+        subtotal:
+          type: number
+          format: double
+        variants:
+          type: array
+          items:
+            type: object
+            properties:
+              variant_name:
+                type: string
+              price_delta:
+                type: number
+                format: double
+
+    # ==================== Payment Schemas ====================
+    PaymentAuthorizationInput:
+      type: object
+      required:
+        - order_id
+        - payment_method_id
+        - amount
+        - currency
+        - idempotency_key
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        payment_method_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: double
+        currency:
+          type: string
+          default: VND
+          example: VND
+        idempotency_key:
+          type: string
+          description: Unique key to prevent double-charge
+
+    PaymentAuthorization:
+      type: object
+      properties:
+        payment_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [AUTHORIZED]
+        gateway_transaction_id:
+          type: string
+        authorized_at:
+          type: string
+          format: date-time
+
+    # ==================== Delivery Schemas ====================
+    DriverRegistrationInput:
+      type: object
+      required:
+        - vehicle_type
+        - vehicle_plate
+        - license_number
+      properties:
+        vehicle_type:
+          type: string
+          enum: [BIKE, MOTORBIKE, CAR]
+        vehicle_plate:
+          type: string
+          maxLength: 32
+        license_number:
+          type: string
+          maxLength: 64
+        document_urls:
+          type: object
+          properties:
+            front_id:
+              type: string
+              format: uri
+            back_id:
+              type: string
+              format: uri
+            license:
+              type: string
+              format: uri
+
+    DriverDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED, SUSPENDED]
+        vehicle_type:
+          type: string
+        vehicle_plate:
+          type: string
+        license_number:
+          type: string
+        rating:
+          type: number
+          format: double
+        total_trips:
+          type: integer
+        is_online:
+          type: boolean
+        city_id:
+          type: integer
+          format: int64
+
+    DeliveryTask:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        driver_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [CREATED, ASSIGNED, PICKED_UP, IN_TRANSIT, DELIVERED, CANCELLED]
+        pickup_location:
+          type: object
+          properties:
+            address:
+              type: string
+            lat:
+              type: number
+              format: double
+            lng:
+              type: number
+              format: double
+            contact:
+              type: string
+        dropoff_location:
+          type: object
+          properties:
+            address:
+              type: string
+            lat:
+              type: number
+              format: double
+            lng:
+              type: number
+              format: double
+            contact:
+              type: string
+        current_location:
+          $ref: '#/components/schemas/Location'
+        estimated_delivery_time:
+          type: string
+          format: date-time
+        actual_delivery_time:
+          type: string
+          format: date-time
+
+    DeliveryTaskInput:
+      type: object
+      required:
+        - order_id
+        - pickup_location
+        - dropoff_location
+        - estimated_delivery_time
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        pickup_location:
+          type: object
+          required:
+            - lat
+            - lng
+            - address
+          properties:
+            lat:
+              type: number
+              format: double
+            lng:
+              type: number
+              format: double
+            address:
+              type: string
+            contact:
+              type: string
+        dropoff_location:
+          type: object
+          required:
+            - lat
+            - lng
+            - address
+          properties:
+            lat:
+              type: number
+              format: double
+            lng:
+              type: number
+              format: double
+            address:
+              type: string
+            contact:
+              type: string
+        estimated_delivery_time:
+          type: string
+          format: date-time
+
+    # ==================== Rating Schemas ====================
+    Rating:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        rater_id:
+          type: string
+          format: uuid
+        rater_name:
+          type: string
+        rating_type:
+          type: string
+          enum: [RESTAURANT, DRIVER]
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    RatingInput:
+      type: object
+      required:
+        - order_id
+        - score
+        - rating_type
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        comment:
+          type: string
+          maxLength: 500
+        rating_type:
+          type: string
+          enum: [RESTAURANT, DRIVER]
+
+    # ==================== Notification Schemas ====================
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          example: ORDER_STATUS
+        title:
+          type: string
+        message:
+          type: string
+        read:
+          type: boolean
+        action_url:
+          type: string
+          format: uri
+        created_at:
+          type: string
+          format: date-time
+
+    NotificationPreference:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [PUSH, SMS, EMAIL]
+        type:
+          type: string
+          enum: [ORDER_STATUS, PROMO, RECEIPT, DELIVERY_UPDATE]
+        enabled:
+          type: boolean
+
+    # ==================== Dispute Schemas ====================
+    DisputeSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum: [missing_item, wrong_item, quality, late_delivery, driver_behavior]
+        status:
+          type: string
+          enum: [open, investigating, resolved, rejected]
+        created_at:
+          type: string
+          format: date-time
+
+    DisputeDetail:
+      allOf:
+        - $ref: '#/components/schemas/DisputeSummary'
+        - type: object
+          properties:
+            customer_id:
+              type: string
+              format: uuid
+            description:
+              type: string
+            photo_urls:
+              type: array
+              items:
+                type: string
+                format: uri
+            resolution_type:
+              type: string
+            resolution_amount:
+              type: number
+              format: double
+            resolved_by:
+              type: string
+              format: uuid
+            resolved_at:
+              type: string
+              format: date-time
+            timeline:
+              type: array
+              items:
+                type: object
+                properties:
+                  event:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  actor:
+                    type: string
+
+    DisputeInput:
+      type: object
+      required:
+        - order_id
+        - category
+        - description
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum: [missing_item, wrong_item, quality, late_delivery, driver_behavior]
+        description:
+          type: string
+          maxLength: 500
+        photo_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+
+    # ==================== Admin Schemas ====================
+    DashboardMetrics:
+      type: object
+      properties:
+        metrics:
+          type: object
+          properties:
+            total_orders:
+              type: integer
+            total_revenue:
+              type: number
+              format: double
+            active_users:
+              type: integer
+            average_order_value:
+              type: number
+              format: double
+            on_time_delivery_rate:
+              type: number
+              format: double
+            avg_rating:
+              type: number
+              format: double
+            new_customers:
+              type: integer
+            new_restaurants:
+              type: integer
+            active_drivers:
+              type: integer
+
+    RevenueReport:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              revenue:
+                type: number
+                format: double
+              orders:
+                type: integer
+              avg_order_value:
+                type: number
+                format: double
+              top_restaurants:
+                type: array
+                items:
+                  type: object
+        summary:
+          type: object
+          properties:
+            total_revenue:
+              type: number
+              format: double
+            total_orders:
+              type: integer
+            avg_daily_revenue:
+              type: number
+              format: double
+
+    Coupon:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        type:
+          type: string
+          enum: [PERCENT, FLAT]
+        discount_value:
+          type: number
+          format: double
+        min_order_value:
+          type: number
+          format: double
+        max_discount:
+          type: number
+          format: double
+        global_usage_limit:
+          type: integer
+        per_user_usage_limit:
+          type: integer
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        is_active:
+          type: boolean
+
+    CouponInput:
+      type: object
+      required:
+        - code
+        - type
+        - discount_value
+      properties:
+        code:
+          type: string
+          maxLength: 64
+        type:
+          type: string
+          enum: [PERCENT, FLAT]
+        discount_value:
+          type: number
+          format: double
+        min_order_value:
+          type: number
+          format: double
+        max_discount:
+          type: number
+          format: double
+        global_usage_limit:
+          type: integer
+        per_user_usage_limit:
+          type: integer
+          default: 1
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        target_restaurant_id:
+          type: string
+          format: uuid
+        city_id:
+          type: integer
+          format: int64
+
+    SystemConfig:
+      type: object
+      properties:
+        delivery_fee_base:
+          type: number
+          format: double
+          example: 15000
+        delivery_fee_per_km:
+          type: number
+          format: double
+          example: 3000
+        min_order_value:
+          type: number
+          format: double
+          example: 50000
+        tax_rate:
+          type: number
+          format: double
+          example: 0.1
+
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Request validation failed
+              details:
+                field: email
+                reason: invalid_format
+              trace_id: abc-123-xyz
+
+    UnauthorizedError:
+      description: Authentication failed or token expired
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: AUTH_TOKEN_EXPIRED
+              message: JWT token has expired
+              trace_id: abc-123-xyz
+
+    ForbiddenError:
+      description: Access denied - insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: ACCESS_DENIED
+              message: User lacks permission for this resource
+              trace_id: abc-123-xyz
+
+    NotFoundError:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: RESOURCE_NOT_FOUND
+              message: Requested resource does not exist
+              trace_id: abc-123-xyz
+
+    DuplicateError:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: DUPLICATE_REQUEST
+              message: Email already registered
+              trace_id: abc-123-xyz
+
+    RateLimitError:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: RATE_LIMIT_EXCEEDED
+              message: Too many requests. Please try again later.
+              trace_id: abc-123-xyz
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per minute
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Unix timestamp when limit resets
