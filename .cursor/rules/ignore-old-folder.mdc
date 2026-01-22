@@ -1,0 +1,10 @@
+---
+description: Do not read files from the old folder
+alwaysApply: true
+---
+
+# Ignore Old Folder
+
+Do not read, access, or reference any files from the `./old/` folder or any subdirectories within it.
+
+This folder contains outdated or deprecated files that should not be used as reference or context for current work.
